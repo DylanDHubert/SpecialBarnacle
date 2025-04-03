@@ -4,10 +4,7 @@ services:
     env: python
     buildCommand: |
       pip install -r requirements.txt
-      if [ ! -f "hold_detector.pt" ]; then
-        echo "Model weights not found. Please ensure hold_detector.pt is present in the repository."
-        exit 1
-      fi
+      python -c "from ultralytics import YOLO; YOLO('yolov8s.pt')"
     startCommand: uvicorn app:app --host 0.0.0.0 --port $PORT
     envVars:
       - key: PYTHON_VERSION
