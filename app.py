@@ -6,6 +6,7 @@ import cv2
 import numpy as np
 import io
 import json
+import os
 from sklearn.cluster import KMeans
 from collections import defaultdict
 
@@ -19,6 +20,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.get("/health")
+async def health_check():
+    return {"status": "healthy", "model_loaded": model is not None}
 
 # Load the model
 model = YOLO('hold_detector.pt')
@@ -63,45 +68,49 @@ def group_holds_by_color(holds, rgb_values, n_clusters=3):
 
 @app.post("/predict")
 async def predict(file: UploadFile = File(...)):
-    # Read the image file
-    contents = await file.read()
-    nparr = np.frombuffer(contents, np.uint8)
-    img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-    
-    # Run inference
-    results = model(img)
-    
-    # Process results and collect RGB values
-    holds = []
-    rgb_values = []
-    for result in results:
-        for box in result.boxes:
-            confidence = float(box.conf[0])
-            # Skip low confidence predictions
-            if confidence < CONFIDENCE_THRESHOLD:
-                continue
+    try:
+        # Read the image file
+        contents = await file.read()
+        nparr = np.frombuffer(contents, np.uint8)
+        img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        
+        # Run inference
+        results = model(img)
+        
+        # Process results and collect RGB values
+        holds = []
+        rgb_values = []
+        for result in results:
+            for box in result.boxes:
+                confidence = float(box.conf[0])
+                # Skip low confidence predictions
+                if confidence < CONFIDENCE_THRESHOLD:
+                    continue
+                    
+                x1, y1, x2, y2 = box.xyxy[0].tolist()
+                # Get average RGB values for the hold
+                avg_rgb = get_average_rgb(img, [x1, y1, x2, y2])
                 
-            x1, y1, x2, y2 = box.xyxy[0].tolist()
-            # Get average RGB values for the hold
-            avg_rgb = get_average_rgb(img, [x1, y1, x2, y2])
-            
-            hold_data = {
-                "bbox": [x1, y1, x2, y2]
-            }
-            holds.append(hold_data)
-            rgb_values.append(avg_rgb)
-    
-    # Group holds by color
-    if holds:
-        rgb_values_array = np.array(rgb_values)
-        grouped_holds = group_holds_by_color(holds, rgb_values_array)
-    else:
-        grouped_holds = {}
-    
-    return {
-        f"route_{i}": route_holds 
-        for i, route_holds in grouped_holds.items()
-    }
+                hold_data = {
+                    "bbox": [x1, y1, x2, y2]
+                }
+                holds.append(hold_data)
+                rgb_values.append(avg_rgb)
+        
+        # Group holds by color
+        if holds:
+            rgb_values_array = np.array(rgb_values)
+            grouped_holds = group_holds_by_color(holds, rgb_values_array)
+        else:
+            grouped_holds = {}
+        
+        return {
+            f"route_{i}": route_holds 
+            for i, route_holds in grouped_holds.items()
+        }
+    finally:
+        # Ensure the file is closed and cleaned up
+        await file.close()
 
 @app.get("/")
 async def root():
